@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.UbuntuPlasma" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:statusBarColor">#2C001E</item>
+        <item name="colorPrimary">#E95420</item>
+        <item name="colorPrimaryDark">#2C001E</item>
+        <item name="android:windowBackground">#2C001E</item>
+    </style>
+</resources>

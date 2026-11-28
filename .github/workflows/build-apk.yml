@@ -1,0 +1,105 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Ubuntu Plasma APK (arm64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Le runner ubuntu-latest fournit déjà le SDK Android (ANDROID_HOME)
+      # avec les licences acceptées.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.6'
+
+      - name: Fetch PRoot and native dependencies (arm64)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf
+          WORK="$(mktemp -d)"
+          DEST="$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$DEST"
+          cd "$WORK"
+          BASE="https://packages.termux.dev/apt/termux-main"
+          curl -fsSL --retry 3 "$BASE/dists/stable/main/binary-aarch64/Packages.gz" | gzip -dc > Packages
+          for PKG in proot libtalloc libandroid-shmem; do
+            read -r FILE SHA < <(python3 -c 'import sys; rows = [dict(line.split(": ", 1) for line in block.splitlines() if ": " in line and not line.startswith(" ")) for block in open("Packages").read().split("\n\n")]; p = next(x for x in rows if x.get("Package") == sys.argv[1] and x.get("Architecture") == "aarch64"); print(p["Filename"], p["SHA256"])' "$PKG")
+            test -n "$FILE" && test -n "$SHA"
+            echo "Package: $FILE"
+            curl -fsSL --retry 3 "$BASE/${FILE#./}" -o "$PKG.deb"
+            echo "$SHA  $PKG.deb" | sha256sum -c -
+            dpkg-deb -x "$PKG.deb" extract
+          done
+          PREFIX="$WORK/extract/data/data/com.termux/files/usr"
+          install -m 755 "$PREFIX/bin/proot" "$DEST/libproot.so"
+          install -m 755 "$PREFIX/libexec/proot/loader" "$DEST/libproot-loader.so"
+          TALLOC=$(find "$PREFIX/lib" -maxdepth 1 -type f -name 'libtalloc.so*' | head -n1)
+          SHMEM=$(find "$PREFIX/lib" -maxdepth 1 -type f -name 'libandroid-shmem.so*' | head -n1)
+          test -n "$TALLOC" && test -n "$SHMEM"
+          install -m 755 "$TALLOC" "$DEST/libtalloc.so"
+          install -m 755 "$SHMEM" "$DEST/libandroid-shmem.so"
+          for LIB in libtalloc libandroid-shmem; do
+            patchelf --set-soname "$LIB.so" "$DEST/$LIB.so"
+          done
+          for ELF in "$DEST"/lib*.so; do
+            if [ "$ELF" = "$DEST/libproot-loader.so" ]; then continue; fi
+            for NEEDED in $(patchelf --print-needed "$ELF"); do
+              case "$NEEDED" in
+                *libtalloc.so*) NEW=libtalloc.so ;;
+                *libandroid-shmem.so*) NEW=libandroid-shmem.so ;;
+                *) continue ;;
+              esac
+              if [ "$NEEDED" != "$NEW" ]; then
+                patchelf --replace-needed "$NEEDED" "$NEW" "$ELF"
+              fi
+            done
+            patchelf --remove-rpath "$ELF"
+            readelf -h "$ELF" | grep -q AArch64
+            readelf -d "$ELF"
+          done
+          readelf -h "$DEST/libproot-loader.so" | grep -q AArch64
+
+      - name: Build APKs
+        run: |
+          gradle -p . --no-daemon assembleDebug assembleRelease
+
+      - name: Verify ARM64 native files inside APKs
+        run: |
+          set -euo pipefail
+          for APK in app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk; do
+            for LIB in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so; do
+              unzip -l "$APK" "lib/arm64-v8a/$LIB" | grep -F "lib/arm64-v8a/$LIB"
+              unzip -p "$APK" "lib/arm64-v8a/$LIB" > "/tmp/$LIB"
+              readelf -h "/tmp/$LIB" | grep -q AArch64
+            done
+          done
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-plasma-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
