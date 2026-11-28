@@ -1,6 +1,7 @@
 package com.ddd.ubuplasma
 
 import android.content.Context
+import android.system.Os
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -29,10 +30,21 @@ class RootfsInstaller(
     val rootfsDir: File get() = File(context.filesDir, "ubuntu")
     val rootHome: File get() = File(rootfsDir, "root")
 
+    private val rootfsMarker get() = File(rootfsDir, ".rootfs-v2")
+    private val plasmaMarker get() = File(rootfsDir, ".plasma-ready")
+    val hasRootfs: Boolean
+        get() = rootfsMarker.isFile && File(rootfsDir, "usr/bin/bash").isFile
     val isInstalled: Boolean
-        get() = File(rootfsDir, "bin/bash").exists() && File(rootHome, "start-plasma.sh").exists()
+        get() = hasRootfs && plasmaMarker.isFile
+
+    fun markPlasmaInstalled() { plasmaMarker.writeText("ok\n") }
 
     suspend fun install() = withContext(Dispatchers.IO) {
+        if (hasRootfs) {
+            copyScripts()
+            log("Rootfs existant réutilisé.")
+            return@withContext
+        }
         log("Téléchargement du rootfs Ubuntu ARM64…")
         val archive = download()
         try {
@@ -40,6 +52,8 @@ class RootfsInstaller(
             extract(archive)
             writeEtcFiles()
             copyScripts()
+            check(File(rootfsDir, "usr/bin/bash").isFile) { "Rootfs incomplet : bash absent" }
+            rootfsMarker.writeText("ok\n")
             log("Rootfs Ubuntu installé.")
         } finally {
             archive.delete()
@@ -83,30 +97,56 @@ class RootfsInstaller(
         rootfsDir.deleteRecursively()
         rootfsDir.mkdirs()
 
+        val links = mutableListOf<Triple<File, String, Boolean>>()
         TarArchiveInputStream(XZCompressorInputStream(archive.inputStream())).use { tar ->
             while (true) {
                 val entry: TarArchiveEntry = tar.nextTarEntry ?: break
                 val target = resolvedTarget(entry.name) ?: continue
-
-                if (entry.isDirectory) {
-                    target.mkdirs()
-                    continue
+                when {
+                    entry.isSymbolicLink || entry.isLink -> {
+                        links.add(Triple(target, entry.linkName, entry.isSymbolicLink))
+                    }
+                    entry.isDirectory -> target.mkdirs()
+                    entry.isFile -> {
+                        target.parentFile?.mkdirs()
+                        FileOutputStream(target).use { output -> tar.copyTo(output, BUFFER_SIZE) }
+                        applyMode(target, entry.mode)
+                    }
+                    else -> Unit // PRoot binds /dev, /proc and /sys at runtime.
                 }
-                target.parentFile?.mkdirs()
-                FileOutputStream(target).use { output -> tar.copyTo(output, BUFFER_SIZE) }
-                applyMode(target, entry.mode)
             }
+        }
+
+        // Hard links first: their targets are ordinary archive files.
+        for ((target, name, symbolic) in links) {
+            if (symbolic) continue
+            val source = resolvedTarget(name) ?: error("Lien dur invalide : $name")
+            check(source.isFile) { "Cible de lien dur absente : $name" }
+            target.parentFile?.mkdirs()
+            if (target.exists()) target.delete()
+            Os.link(source.absolutePath, target.absolutePath)
+        }
+        // Preserve relative links and make absolute guest links relative to this rootfs.
+        val root = rootfsDir.toPath().toAbsolutePath().normalize()
+        for ((target, name, symbolic) in links) {
+            if (!symbolic) continue
+            val destination = if (name.startsWith("/")) root.resolve(name.trimStart('/'))
+                else target.parentFile!!.toPath().resolve(name)
+            val normalized = destination.normalize()
+            check(normalized.startsWith(root)) { "Lien symbolique hors rootfs : $name" }
+            target.parentFile?.mkdirs()
+            if (target.exists()) target.delete()
+            val relative = target.parentFile!!.toPath().relativize(normalized).toString()
+            Os.symlink(relative.ifEmpty { "." }, target.absolutePath)
         }
     }
 
     private fun resolvedTarget(name: String): File? {
-        val normalized = name.removePrefix("./")
-        if (normalized.isEmpty()) return null
-        if (normalized.contains("..") || normalized.startsWith("/")) {
-            log("Entrée ignorée (chemin suspect) : $name")
-            return null
-        }
-        return File(rootfsDir, normalized)
+        val root = rootfsDir.toPath().toAbsolutePath().normalize()
+        if (name.startsWith("/")) return null
+        val target = root.resolve(name).normalize()
+        if (target == root || !target.startsWith(root)) return null
+        return target.toFile()
     }
 
     private fun applyMode(target: File, mode: Int) {
@@ -116,7 +156,10 @@ class RootfsInstaller(
     }
 
     private fun writeEtcFiles() {
-        File(rootfsDir, "etc/resolv.conf").writeText(
+        val resolv = File(rootfsDir, "etc/resolv.conf")
+        // Cloud images may ship a dangling systemd-resolved symlink.
+        runCatching { Os.unlink(resolv.absolutePath) }
+        resolv.writeText(
             """
             nameserver 8.8.8.8
             nameserver 1.1.1.1

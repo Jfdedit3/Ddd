@@ -11,8 +11,9 @@ android {
         applicationId = "com.ddd.ubuplasma"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        ndk { abiFilters += "arm64-v8a" }
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -37,6 +38,7 @@ android {
             // Nécessaire pour que libproot.so soit extraite sur le disque
             // et puisse être exécutée.
             useLegacyPackaging = true
+            keepDebugSymbols += setOf("**/libproot.so", "**/libproot-loader.so", "**/libtalloc.so", "**/libandroid-shmem.so")
         }
     }
 }

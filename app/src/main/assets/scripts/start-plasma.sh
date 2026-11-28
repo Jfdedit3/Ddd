@@ -19,14 +19,14 @@ mkdir -p /tmp/.X11-unix
 rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
 
 echo "[plasma] Lancement de Xvnc :${DISPLAY_NUM} (${WIDTH}x${HEIGHT})..."
-Xvnc ":${DISPLAY_NUM}" \
+Xtigervnc ":${DISPLAY_NUM}" \
     -geometry "${WIDTH}x${HEIGHT}" \
     -depth 24 \
     -rfbport 5901 \
     -localhost yes \
     -SecurityTypes None \
     -NeverShared \
-    -FP none &
+    &
 XVNC_PID=$!
 
 for i in $(seq 1 30); do
@@ -39,6 +39,8 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
+
+xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1 || { echo "[plasma] Xvnc ne répond pas."; exit 1; }
 
 echo "[plasma] Lancement de la session KDE Plasma..."
 export XDG_CURRENT_DESKTOP=KDE

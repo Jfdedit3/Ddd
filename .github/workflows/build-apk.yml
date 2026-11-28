@@ -32,24 +32,67 @@ jobs:
         with:
           gradle-version: '8.6'
 
-      - name: Fetch PRoot binary (arm64, Android/bionic)
+      - name: Fetch PRoot and native dependencies (arm64)
         run: |
           set -euo pipefail
-          mkdir -p /tmp/proot
-          cd /tmp/proot
-          INDEX=$(curl -fsSL https://packages.termux.dev/apt/termux-main/pool/main/p/proot/)
-          FILE=$(echo "$INDEX" | grep -oE 'proot_[0-9][^"]*_aarch64\.deb' | sort -V | tail -n1)
-          echo "Paquet sélectionné : $FILE"
-          curl -fsSLO "https://packages.termux.dev/apt/termux-main/pool/main/p/proot/$FILE"
-          dpkg-deb -x "$FILE" extract
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-          cp extract/data/data/com.termux/files/usr/bin/proot \
-             app/src/main/jniLibs/arm64-v8a/libproot.so
-          chmod +x app/src/main/jniLibs/arm64-v8a/libproot.so
+          sudo apt-get update -qq
+          sudo apt-get install -y patchelf
+          WORK="$(mktemp -d)"
+          DEST="$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$DEST"
+          cd "$WORK"
+          for PKG in proot libtalloc libandroid-shmem; do
+            URL="https://packages.termux.dev/apt/termux-main/pool/main/${PKG:0:1}/$PKG"
+            INDEX=$(curl -fsSL --retry 3 "$URL/")
+            FILE=$(printf '%s\n' "$INDEX" | grep -oE "${PKG}_[0-9][^\"<> ]*_aarch64\.deb" | sort -Vu | tail -n1)
+            test -n "$FILE"
+            echo "Package: $FILE"
+            curl -fsSL --retry 3 "$URL/$FILE" -o "$FILE"
+            dpkg-deb -x "$FILE" extract
+          done
+          PREFIX="$WORK/extract/data/data/com.termux/files/usr"
+          install -m 755 "$PREFIX/bin/proot" "$DEST/libproot.so"
+          install -m 755 "$PREFIX/libexec/proot/loader" "$DEST/libproot-loader.so"
+          TALLOC=$(find "$PREFIX/lib" -maxdepth 1 -type f -name 'libtalloc.so*' | head -n1)
+          SHMEM=$(find "$PREFIX/lib" -maxdepth 1 -type f -name 'libandroid-shmem.so*' | head -n1)
+          test -n "$TALLOC" && test -n "$SHMEM"
+          install -m 755 "$TALLOC" "$DEST/libtalloc.so"
+          install -m 755 "$SHMEM" "$DEST/libandroid-shmem.so"
+          for LIB in libtalloc libandroid-shmem; do
+            patchelf --set-soname "$LIB.so" "$DEST/$LIB.so"
+          done
+          for ELF in "$DEST"/lib*.so; do
+            if [ "$ELF" = "$DEST/libproot-loader.so" ]; then continue; fi
+            for NEEDED in $(patchelf --print-needed "$ELF"); do
+              case "$NEEDED" in
+                *libtalloc.so*) NEW=libtalloc.so ;;
+                *libandroid-shmem.so*) NEW=libandroid-shmem.so ;;
+                *) continue ;;
+              esac
+              if [ "$NEEDED" != "$NEW" ]; then
+                patchelf --replace-needed "$NEEDED" "$NEW" "$ELF"
+              fi
+            done
+            patchelf --remove-rpath "$ELF"
+            readelf -h "$ELF" | grep -q AArch64
+            readelf -d "$ELF"
+          done
+          readelf -h "$DEST/libproot-loader.so" | grep -q AArch64
 
       - name: Build APKs
         run: |
           gradle -p . --no-daemon assembleDebug assembleRelease
+
+      - name: Verify ARM64 native files inside APKs
+        run: |
+          set -euo pipefail
+          for APK in app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk; do
+            for LIB in libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so; do
+              unzip -l "$APK" "lib/arm64-v8a/$LIB" | grep -F "lib/arm64-v8a/$LIB"
+              unzip -p "$APK" "lib/arm64-v8a/$LIB" > "/tmp/$LIB"
+              readelf -h "/tmp/$LIB" | grep -q AArch64
+            done
+          done
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4

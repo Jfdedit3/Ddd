@@ -21,7 +21,11 @@
             android:layout_weight="1"
             android:layout_marginEnd="4dp"
             android:text="@string/install_ubuntu"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            android:minWidth="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp" />
 
         <Button
             android:id="@+id/btn_start"
@@ -31,7 +35,11 @@
             android:layout_marginEnd="4dp"
             android:enabled="false"
             android:text="@string/start_plasma"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            android:minWidth="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp" />
 
         <Button
             android:id="@+id/btn_stop"
@@ -41,7 +49,11 @@
             android:layout_marginEnd="4dp"
             android:enabled="false"
             android:text="@string/stop_session"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            android:minWidth="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp" />
 
         <Button
             android:id="@+id/btn_log"
@@ -49,7 +61,11 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="@string/show_log"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:textAllCaps="false"
+            android:minWidth="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp" />
     </LinearLayout>
 
     <EditText

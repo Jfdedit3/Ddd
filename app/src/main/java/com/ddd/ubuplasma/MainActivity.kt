@@ -85,6 +85,7 @@ class MainActivity : AppCompatActivity(), VncView.Callback {
         setupKeyboard()
 
         btnStart.isEnabled = installer.isInstalled
+        btnInstall.isEnabled = !installer.isInstalled
         appendLog(
             "Bienvenue ! Étape 1 : bouton « Installer Ubuntu » (télécharge le rootfs " +
                 "ARM64 et installe KDE Plasma + Xvnc, 10 à 30 min). " +
@@ -140,8 +141,10 @@ class MainActivity : AppCompatActivity(), VncView.Callback {
 
         lifecycleScope.launch {
             try {
+                withContext(Dispatchers.IO) { session.verifyRuntime() }
                 installer.install()
                 runBootstrap()
+                withContext(Dispatchers.IO) { installer.markPlasmaInstalled() }
             } catch (e: Exception) {
                 appendLog("ERREUR installation : ${e.message}")
                 toast("Installation échouée : ${e.message}")
@@ -158,10 +161,8 @@ class MainActivity : AppCompatActivity(), VncView.Callback {
         val args = session.bootstrapArgs()
         withContext(Dispatchers.IO) {
             val process = session.launch(args) { }
-            try {
-                process.waitFor()
-            } catch (_: InterruptedException) {
-            }
+            val code = process.waitFor()
+            check(code == 0) { "Installation de Plasma échouée (code $code). Consulte le journal puis réessaie." }
         }
     }
 

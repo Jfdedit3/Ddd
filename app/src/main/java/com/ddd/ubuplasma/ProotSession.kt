@@ -13,8 +13,29 @@ import kotlin.concurrent.thread
 class ProotSession(context: Context, private val log: (String) -> Unit) {
 
     private val rootfs: File = File(context.filesDir, "ubuntu")
-    private val prootBin: File =
-        File(context.applicationInfo.nativeLibraryDir, "libproot.so")
+    private val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+    private val prootBin = File(nativeDir, "libproot.so")
+    private val prootLoader = File(nativeDir, "libproot-loader.so")
+    private val prootTmp = File(context.cacheDir, "proot-tmp")
+
+    private fun builder(args: List<String>): ProcessBuilder = ProcessBuilder(args).apply {
+        redirectErrorStream(true)
+        prootTmp.mkdirs()
+        environment()["LD_LIBRARY_PATH"] = nativeDir.absolutePath
+        environment()["PROOT_LOADER"] = prootLoader.absolutePath
+        environment()["PROOT_TMP_DIR"] = prootTmp.absolutePath
+    }
+
+    fun verifyRuntime() {
+        for (name in listOf("libproot.so", "libproot-loader.so", "libtalloc.so", "libandroid-shmem.so")) {
+            val file = File(nativeDir, name)
+            check(file.isFile && file.length() > 0) { "Bibliothèque native absente : ${file.absolutePath}" }
+        }
+        val process = builder(listOf(prootBin.absolutePath, "--version")).start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        check(process.waitFor() == 0) { "PRoot ne démarre pas : $output" }
+        log("PRoot ARM64 disponible : ${output.lineSequence().firstOrNull().orEmpty()}")
+    }
 
     @Volatile
     var currentProcess: Process? = null
@@ -35,11 +56,11 @@ class ProotSession(context: Context, private val log: (String) -> Unit) {
                     "le workflow CI doit avoir copié libproot.so dans jniLibs."
             )
         }
-        prootBin.setExecutable(true)
 
         return listOf(
             prootBin.absolutePath,
             "--kill-on-exit",
+            "--link2symlink",
             "-0",
             "-r", rootfs.absolutePath,
             "-w", "/root",
@@ -62,9 +83,7 @@ class ProotSession(context: Context, private val log: (String) -> Unit) {
     fun launch(args: List<String>, onExit: (Int) -> Unit): Process {
         stop()
         log("\$ ${args.joinToString(" ")}")
-        val process = ProcessBuilder(args)
-            .redirectErrorStream(true)
-            .start()
+        val process = builder(args).start()
         currentProcess = process
 
         thread(name = "proot-output") {
