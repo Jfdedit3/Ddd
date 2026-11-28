@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ubuntu Plasma</string>
+    <string name="install_ubuntu">Installer Ubuntu (rootfs + Plasma)</string>
+    <string name="start_plasma">Démarrer Plasma</string>
+    <string name="stop_session">Arrêter la session</string>
+    <string name="show_log">Journal</string>
+    <string name="keyboard">Clavier</string>
+    <string name="connecting">Connexion au bureau Plasma…</string>
+    <string name="installing">Téléchargement et installation d\'Ubuntu ARM64…</string>
+    <string name="not_arm64">Attention : cet appareil n\'est pas ARM64, l\'image Ubuntu fournie risque de ne pas fonctionner.</string>
+</resources>
