@@ -158,7 +158,7 @@ class RootfsInstaller(
     private fun writeEtcFiles() {
         val resolv = File(rootfsDir, "etc/resolv.conf")
         // Cloud images may ship a dangling systemd-resolved symlink.
-        runCatching { Os.unlink(resolv.absolutePath) }
+        java.nio.file.Files.deleteIfExists(resolv.toPath())
         resolv.writeText(
             """
             nameserver 8.8.8.8
